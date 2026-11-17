@@ -116,6 +116,30 @@ export function isCommandMissingCause(error: unknown): boolean {
   return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
 }
 
+export function formatProviderStartupFailure(
+  provider: string,
+  failure:
+    | { readonly type: "spawn"; readonly cause: unknown }
+    | { readonly type: "timeout"; readonly timeoutMs: number }
+    | { readonly type: "exit"; readonly code: number },
+): string {
+  const rerun = "Run the configured executable with `--version` in this environment's terminal";
+  switch (failure.type) {
+    case "exit":
+      return `${provider} version check failed (exit code ${failure.code}). ${rerun} to inspect the startup error.`;
+    case "timeout":
+      return `${provider} version check timed out after ${failure.timeoutMs / 1_000}s. ${rerun} to check whether startup is slow or blocked.`;
+    case "spawn":
+      if (
+        failure.cause instanceof PlatformError.PlatformError &&
+        failure.cause.reason._tag === "PermissionDenied"
+      ) {
+        return `${provider} version check could not start: access denied. Check executable permissions and security restrictions for Binary path in this environment's provider settings.`;
+      }
+      return `${provider} version check could not start. Check Binary path in this environment's provider settings. ${rerun} to inspect the startup error.`;
+  }
+}
+
 /**
  * Environment for background status probes. A mise shim for a missing tool would otherwise
  * download it on every refresh and leave a partial download behind when the probe times out.

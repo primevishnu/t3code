@@ -26,6 +26,7 @@ import {
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
+  formatProviderStartupFailure,
   COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
   parseCliVersionResult,
@@ -376,10 +377,13 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
   }
 
   const probeEnvironment = providerProbeEnvironment(environment);
+  const versionTimeoutMs = resolveProviderProbeTimeoutMs(
+    "kiro",
+    VERSION_PROBE_TIMEOUT_MS,
+    environment,
+  );
   const versionResult = yield* runKiroCli(settings, ["--version"], probeEnvironment).pipe(
-    Effect.timeoutOption(
-      resolveProviderProbeTimeoutMs("kiro", VERSION_PROBE_TIMEOUT_MS, environment),
-    ),
+    Effect.timeoutOption(versionTimeoutMs),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
@@ -391,7 +395,12 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       auth: { status: "unknown" },
       message: missing
         ? "Kiro CLI (`kiro-cli`) is not installed or not on PATH."
-        : "Failed to run `kiro-cli --version`.",
+        : formatProviderStartupFailure(
+            "Kiro CLI",
+            Result.isFailure(versionResult)
+              ? { type: "spawn", cause: versionResult.failure }
+              : { type: "timeout", timeoutMs: versionTimeoutMs },
+          ),
     });
   }
   const versionOutput = versionResult.success.value;
@@ -402,7 +411,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       version,
       status: "error",
       auth: { status: "unknown" },
-      message: "Kiro CLI is installed but failed to run.",
+      message: formatProviderStartupFailure("Kiro CLI", { type: "exit", code: versionOutput.code }),
     });
   }
 

@@ -70,6 +70,8 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).not.toContain("secret-test-value");
+      expect(snapshot.message).toContain("exit code 2");
+      expect(snapshot.message).toContain("--version");
       expect(createHost).not.toHaveBeenCalled();
     }),
   );

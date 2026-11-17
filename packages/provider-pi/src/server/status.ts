@@ -32,6 +32,7 @@ import {
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   buildServerProvider,
+  formatProviderStartupFailure,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseCliVersionResult,
@@ -454,10 +455,13 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   const probeEnvironment = providerProbeEnvironment(environment);
+  const versionTimeoutMs = resolveProviderProbeTimeoutMs(
+    "pi",
+    VERSION_PROBE_TIMEOUT_MS,
+    environment,
+  );
   const versionResult = yield* runPiVersionCommand(piSettings, probeEnvironment).pipe(
-    Effect.timeoutOption(
-      resolveProviderProbeTimeoutMs("pi", VERSION_PROBE_TIMEOUT_MS, environment),
-    ),
+    Effect.timeoutOption(versionTimeoutMs),
     Effect.result,
   );
 
@@ -476,7 +480,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
           ? "Pi CLI (`pi`) is not installed or not on PATH. Install with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`."
-          : "Failed to execute Pi CLI health check.",
+          : formatProviderStartupFailure("Pi CLI", { type: "spawn", cause: error }),
       },
     });
   }
@@ -492,7 +496,10 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Pi CLI is installed but timed out while running `pi --version`.",
+        message: formatProviderStartupFailure("Pi CLI", {
+          type: "timeout",
+          timeoutMs: versionTimeoutMs,
+        }),
       },
     });
   }
@@ -510,7 +517,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: "Pi CLI is installed but failed to run.",
+        message: formatProviderStartupFailure("Pi CLI", { type: "exit", code: versionOutput.code }),
       },
     });
   }

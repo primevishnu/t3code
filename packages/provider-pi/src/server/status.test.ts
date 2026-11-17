@@ -215,7 +215,7 @@ describe("PiProvider", () => {
       versionDelay: "Infinity",
       status: "error",
       version: null,
-      message: "Pi CLI is installed but timed out while running `pi --version`.",
+      message: "timed out after 10s",
       probesAfterVersion: false,
     },
   ] as const)("gives `pi --version` 10 s when it $label", (row) =>

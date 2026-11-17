@@ -5,6 +5,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -12,6 +13,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
   isCommandMissingCause,
+  formatProviderStartupFailure,
   resolveProviderProbeTimeoutMs,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -35,6 +37,39 @@ const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabil
       currentValue: "build",
     },
   ],
+});
+
+describe("formatProviderStartupFailure", () => {
+  it.each([
+    {
+      cause: PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "ChildProcess",
+        method: "spawn",
+        pathOrDescriptor: "C:\\private-token\\cli.exe",
+        description: "Bearer private-token",
+      }),
+      category: "access denied",
+    },
+    { cause: new Error("access_token=private-token"), category: "could not start" },
+  ])("classifies a spawn failure without exposing native details", ({ cause, category }) => {
+    const message = formatProviderStartupFailure("Fixture CLI", { type: "spawn", cause });
+    expect(message).toContain(category);
+    expect(message).toContain("Binary path");
+    expect(message).not.toContain("private-token");
+    expect(message).not.toContain("Bearer");
+    expect(message).not.toContain("access_token");
+  });
+
+  it("reports the resolved deadline rather than the default probe budget", () => {
+    const timeoutMs = resolveProviderProbeTimeoutMs("fixture", 10_000, {
+      T3CODE_FIXTURE_PROBE_TIMEOUT_MS: "12500",
+    });
+    const message = formatProviderStartupFailure("Fixture CLI", { type: "timeout", timeoutMs });
+    expect(message).toContain("12.5s");
+    expect(message).toContain("--version");
+    expect(message).toContain("this environment");
+  });
 });
 
 describe("providerModelsFromSettings", () => {

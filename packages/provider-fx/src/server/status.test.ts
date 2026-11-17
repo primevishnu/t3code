@@ -94,7 +94,7 @@ describe("checkFxProviderStatus", () => {
       versionDelay: "Infinity",
       status: "error",
       version: null,
-      message: "Failed to run `fx --version`.",
+      message: "timed out after 10s",
       invoked: ["--version"],
     },
   ] as const)("gives `fx --version` 10 s when it $label", (row) =>
@@ -107,7 +107,8 @@ describe("checkFxProviderStatus", () => {
       const { draft, invoked } = yield* Fiber.join(fiber);
       assert.equal(draft.status, row.status);
       assert.equal(draft.version, row.version);
-      assert.equal(draft.message, row.message);
+      if (row.message === undefined) assert.isUndefined(draft.message);
+      else assert.include(draft.message ?? "", row.message);
       assert.deepEqual(invoked, [...row.invoked]);
     }),
   );

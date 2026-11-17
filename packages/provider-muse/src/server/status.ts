@@ -17,6 +17,7 @@ import {
 } from "./modelCatalog.ts";
 import {
   buildServerProvider,
+  formatProviderStartupFailure,
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
@@ -76,6 +77,11 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       slashCommands: [COMPACT_SLASH_COMMAND],
       probe,
     });
+  const versionTimeoutMs = resolveProviderProbeTimeoutMs(
+    "muse",
+    DEFAULT_TIMEOUT_MS,
+    museEnvironment,
+  );
   const versionResult = yield* Effect.gen(function* () {
     const spawnCommand = yield* resolveSpawnCommand(settings.binaryPath, ["--version"], {
       env: museEnvironment,
@@ -88,12 +94,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         ...(cwd ? { cwd } : {}),
       }),
     );
-  }).pipe(
-    Effect.timeoutOption(
-      resolveProviderProbeTimeoutMs("muse", DEFAULT_TIMEOUT_MS, museEnvironment),
-    ),
-    Effect.result,
-  );
+  }).pipe(Effect.timeoutOption(versionTimeoutMs), Effect.result);
 
   if (Result.isFailure(versionResult)) {
     const missing = isCommandMissingCause(versionResult.failure);
@@ -104,7 +105,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       auth: { status: "unknown" },
       message: missing
         ? "Muse Code CLI (`muse`) was not found. Install Muse Code and run `muse login` on this T3 server host."
-        : "Failed to execute Muse Code CLI. Check its binary path on this T3 server host.",
+        : formatProviderStartupFailure("Muse Code CLI", {
+            type: "spawn",
+            cause: versionResult.failure,
+          }),
     });
   }
   if (Option.isNone(versionResult.success)) {
@@ -113,7 +117,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       version: null,
       status: "error",
       auth: { status: "unknown" },
-      message: "Muse Code CLI version check timed out.",
+      message: formatProviderStartupFailure("Muse Code CLI", {
+        type: "timeout",
+        timeoutMs: versionTimeoutMs,
+      }),
     });
   }
   const versionOutput = versionResult.success.value;
@@ -128,7 +135,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       // (common after a mise upgrade) refuses to install it; a manual run completes setup.
       message: versionOutput.stderr.includes("installed binary is missing")
         ? "Muse Code has not finished installing. Run `muse --version` on this T3 server host, then refresh its status."
-        : "Muse Code CLI is installed but failed to run.",
+        : formatProviderStartupFailure("Muse Code CLI", { type: "exit", code: versionOutput.code }),
     });
   }
 

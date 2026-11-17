@@ -225,7 +225,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProvide
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(true);
       expect(snapshot.status).toBe("error");
-      expect(snapshot.message).toBe("Grok CLI is installed but failed to run.");
+      expect(snapshot.message).toContain("exit code 2");
       expect(snapshot.message).not.toContain(secretStderr);
     }),
   );
@@ -242,7 +242,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProvide
       label: "never answers",
       versionDelay: "Infinity",
       version: null,
-      message: "Grok CLI is installed but timed out while running `grok --version`.",
+      message: "timed out after 10s",
       probesAfterVersion: false,
     },
   ] as const)("gives `grok --version` 10 s when it $label", (row) =>
@@ -287,7 +287,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProvide
       const snapshot = yield* Fiber.join(fiber);
       expect(snapshot.installed).toBe(true);
       expect(snapshot.version).toBe(row.version);
-      expect(snapshot.message).toBe(row.message);
+      if (row.message === undefined) expect(snapshot.message).toBeUndefined();
+      else expect(snapshot.message).toContain(row.message);
       expect(spawned.length > 1).toBe(row.probesAfterVersion);
     }),
   );

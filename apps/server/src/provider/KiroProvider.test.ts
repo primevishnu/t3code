@@ -146,7 +146,7 @@ describe("KiroProvider", () => {
       delay: "Infinity",
       status: "error",
       version: null,
-      message: "Failed to run `kiro-cli --version`.",
+      message: "timed out after 10s",
     },
   ] as const)("gives `kiro-cli --version` 10 s when it $label", (row) =>
     Effect.gen(function* () {
@@ -158,7 +158,8 @@ describe("KiroProvider", () => {
       const { snapshot } = yield* Fiber.join(fiber);
       assert.equal(snapshot.status, row.status);
       assert.equal(snapshot.version, row.version);
-      assert.equal(snapshot.message, row.message);
+      if (row.message === undefined) assert.isUndefined(snapshot.message);
+      else assert.include(snapshot.message ?? "", row.message);
     }),
   );
 
@@ -169,7 +170,9 @@ describe("KiroProvider", () => {
       });
       assert.equal(snapshot.status, "error");
       assert.isTrue(snapshot.installed);
-      assert.equal(snapshot.message, "Kiro CLI is installed but failed to run.");
+      assert.include(snapshot.message ?? "", "exit code 1");
+      assert.include(snapshot.message ?? "", "--version");
+      assert.include(snapshot.message ?? "", "this environment");
       // A broken CLI is not asked for its sign-in.
       assert.deepEqual(invoked, ["--version"]);
     }),

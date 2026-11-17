@@ -38,6 +38,7 @@ import {
 
 import {
   buildServerProvider,
+  formatProviderStartupFailure,
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
@@ -703,17 +704,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const versionTimeoutMs = resolveProviderProbeTimeoutMs(
+    "claude",
+    CLAUDE_VERSION_CHECK_TIMEOUT_MS,
+    resolvedEnvironment,
+  );
   const versionProbe = yield* runClaudeCommand(
     claudeSettings,
     ["--version"],
     providerProbeEnvironment(resolvedEnvironment),
     cwd,
-  ).pipe(
-    Effect.timeoutOption(
-      resolveProviderProbeTimeoutMs("claude", CLAUDE_VERSION_CHECK_TIMEOUT_MS, resolvedEnvironment),
-    ),
-    Effect.result,
-  );
+  ).pipe(Effect.timeoutOption(versionTimeoutMs), Effect.result);
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
@@ -732,7 +733,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
           ? "Claude Agent CLI (`claude`) was not found on PATH."
-          : "Failed to execute Claude Agent CLI health check.",
+          : formatProviderStartupFailure("Claude Agent CLI", { type: "spawn", cause: error }),
       },
     });
   }
@@ -748,8 +749,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message:
-          "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+        message: formatProviderStartupFailure("Claude Agent CLI", {
+          type: "timeout",
+          timeoutMs: versionTimeoutMs,
+        }),
       },
     });
   }
@@ -772,7 +775,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unknown" },
-        message: "Claude Agent CLI is installed but failed to run.",
+        message: formatProviderStartupFailure("Claude Agent CLI", {
+          type: "exit",
+          code: version.code,
+        }),
       },
     });
   }

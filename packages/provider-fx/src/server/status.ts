@@ -20,6 +20,7 @@ import {
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
+  formatProviderStartupFailure,
   isCommandMissingCause,
   nonEmptyTrimmed,
   parseCliVersionResult,
@@ -164,10 +165,13 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
   }
 
   const probeEnvironment = providerProbeEnvironment(environment);
+  const versionTimeoutMs = resolveProviderProbeTimeoutMs(
+    "fx",
+    VERSION_PROBE_TIMEOUT_MS,
+    environment,
+  );
   const versionResult = yield* runFxCli(settings, ["--version"], probeEnvironment).pipe(
-    Effect.timeoutOption(
-      resolveProviderProbeTimeoutMs("fx", VERSION_PROBE_TIMEOUT_MS, environment),
-    ),
+    Effect.timeoutOption(versionTimeoutMs),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
@@ -177,7 +181,14 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
       version: null,
       status: "error",
       auth: { status: "unknown" },
-      message: missing ? "fx is not installed or not on PATH." : "Failed to run `fx --version`.",
+      message: missing
+        ? "fx is not installed or not on PATH."
+        : formatProviderStartupFailure(
+            "fx",
+            Result.isFailure(versionResult)
+              ? { type: "spawn", cause: versionResult.failure }
+              : { type: "timeout", timeoutMs: versionTimeoutMs },
+          ),
     });
   }
   const versionOutput = versionResult.success.value;
@@ -188,7 +199,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
       version,
       status: "error",
       auth: { status: "unknown" },
-      message: "fx is installed but failed to run.",
+      message: formatProviderStartupFailure("fx", { type: "exit", code: versionOutput.code }),
     });
   }
 

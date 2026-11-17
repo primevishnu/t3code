@@ -27,6 +27,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
+  formatProviderStartupFailure,
   COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
   parseCliVersionResult,
@@ -426,16 +427,16 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   const probeEnvironment = grokProbeEnvironment(environment);
   const apiKey = environment[GROK_API_KEY_ENV]?.trim();
 
+  const versionTimeoutMs = resolveProviderProbeTimeoutMs(
+    "grok",
+    VERSION_PROBE_TIMEOUT_MS,
+    environment,
+  );
   const versionResult = yield* runGrokCliCommand(
     grokSettings,
     ["--version"],
     probeEnvironment,
-  ).pipe(
-    Effect.timeoutOption(
-      resolveProviderProbeTimeoutMs("grok", VERSION_PROBE_TIMEOUT_MS, environment),
-    ),
-    Effect.result,
-  );
+  ).pipe(Effect.timeoutOption(versionTimeoutMs), Effect.result);
 
   if (Result.isFailure(versionResult)) {
     const error = versionResult.failure;
@@ -454,7 +455,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
           ? "Grok CLI (`grok`) is not installed or not on PATH."
-          : "Failed to execute Grok CLI health check.",
+          : formatProviderStartupFailure("Grok CLI", { type: "spawn", cause: error }),
       },
     });
   }
@@ -470,7 +471,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Grok CLI is installed but timed out while running `grok --version`.",
+        message: formatProviderStartupFailure("Grok CLI", {
+          type: "timeout",
+          timeoutMs: versionTimeoutMs,
+        }),
       },
     });
   }
@@ -493,7 +497,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: "Grok CLI is installed but failed to run.",
+        message: formatProviderStartupFailure("Grok CLI", {
+          type: "exit",
+          code: versionOutput.code,
+        }),
       },
     });
   }
