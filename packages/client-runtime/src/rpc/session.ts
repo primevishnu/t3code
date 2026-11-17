@@ -201,9 +201,16 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+    const socketClosed = yield* Deferred.make<void>();
     const pingTimedOut = yield* Ref.make(false);
+    const clock = yield* Clock.Clock;
+    const silenceTimeoutNanos = Duration.toNanosUnsafe(PING_TIMEOUT);
+    let lastInboundAt = clock.monotonicTimeNanosUnsafe();
+    let activeSocket: ReturnType<typeof webSocketConstructor> | undefined;
     const hooks = RpcClient.ConnectionHooks.of({
-      onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
+      onConnect: Effect.sync(() => {
+        lastInboundAt = clock.monotonicTimeNanosUnsafe();
+      }).pipe(Effect.andThen(Deferred.succeed(connected, undefined)), Effect.asVoid),
       onDisconnect: Effect.all([Deferred.isDone(connected), Ref.get(pingTimedOut)]).pipe(
         Effect.flatMap(([wasConnected, timedOut]) =>
           Deferred.fail(
@@ -228,13 +235,24 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     // The protocol never reopens its socket, so every frame counted here came
     // from this session's one socket.
     let inboundFrames = 0;
+    const onMessage = () => {
+      inboundFrames += 1;
+      lastInboundAt = clock.monotonicTimeNanosUnsafe();
+    };
+    const onClose = () => Deferred.doneUnsafe(socketClosed, Exit.void);
     const countingWebSocketConstructor: typeof webSocketConstructor = (url, options) => {
       const socket = webSocketConstructor(url, options);
-      socket.addEventListener("message", () => {
-        inboundFrames += 1;
-      });
+      activeSocket = socket;
+      socket.addEventListener("message", onMessage);
+      socket.addEventListener("close", onClose);
       return socket;
     };
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        activeSocket?.removeEventListener("message", onMessage);
+        activeSocket?.removeEventListener("close", onClose);
+      }),
+    );
     const socketUrl = new URL(connection.socketUrl);
     socketUrl.searchParams.set(SOCKET_FRAME_PARTS_QUERY_PARAM, "1");
     const layerSocket = Layer.effect(
@@ -251,10 +269,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
-        pingTimeout: PING_TIMEOUT,
+        // A full subscription queue blocks decoding, including pongs. Raw socket activity owns liveness.
+        pingTimeout: Duration.infinity,
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
-        onPingTimeout: Ref.set(pingTimedOut, true),
       }).pipe(
         // Teardown sends an interrupt per open stream, and a write to a closed
         // socket waits out the client's 1s interrupt timeout before reconnecting.
@@ -278,6 +296,25 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     );
     const protocolContext = yield* Layer.build(layerProtocol).pipe(
       Effect.withSpan("environment.websocket.connect"),
+    );
+    yield* Deferred.await(connected).pipe(
+      Effect.andThen(
+        Effect.gen(function* () {
+          for (;;) {
+            const remaining =
+              lastInboundAt + silenceTimeoutNanos - clock.monotonicTimeNanosUnsafe();
+            if (remaining <= 0n) break;
+            yield* Effect.sleep(Duration.nanos(remaining));
+          }
+          yield* Ref.set(pingTimedOut, true);
+          yield* Effect.sync(() => activeSocket?.close());
+        }),
+      ),
+      Effect.raceFirst(Deferred.await(socketClosed)),
+      Effect.ensuring(hooks.onDisconnect),
+      Effect.raceFirst(Deferred.await(disconnected)),
+      Effect.ignore,
+      Effect.forkScoped,
     );
     // Building the protocol only starts the socket; this span times the
     // handshake up to the first open, without making `connect` wait for it.

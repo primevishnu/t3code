@@ -399,6 +399,70 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect.each(["silence", "close"] as const)(
+    "keeps a socket alive under subscription backpressure until %s",
+    (end) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(ready);
+
+        const events = yield* session.client[WS_METHODS.subscribeServerConfig](
+          {},
+          { asQueue: true },
+        );
+        const request = yield* awaitRequest(socket, 1);
+        const frame = encodeJson({
+          _tag: "Chunk",
+          requestId: request.id,
+          values: Array.from({ length: 32 }, () => ({
+            version: 1,
+            type: "snapshot",
+            config: ENCODED_SERVER_CONFIG,
+          })),
+        });
+        socket.serverMessage(frame);
+        const closed = yield* Effect.forkChild(Effect.exit(session.closed));
+        for (let index = 0; index < 6; index += 1) {
+          socket.serverMessage(encodeJson({ _tag: "Pong" }));
+          yield* TestClock.adjust("4 seconds");
+          expect(closed.pollUnsafe()).toBeUndefined();
+        }
+
+        for (let index = 0; index < 32; index += 1) {
+          expect((yield* Queue.take(events)).type).toBe("snapshot");
+        }
+        const probe = yield* Effect.forkChild(session.probe);
+        const probeRequest = yield* awaitRequest(socket, 2);
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Exit",
+            requestId: probeRequest.id,
+            exit: { _tag: "Success", value: {} },
+          }),
+        );
+        yield* Fiber.join(probe);
+        expect(socket.readyState).toBe(TestWebSocket.OPEN);
+
+        socket.serverMessage(frame);
+        if (end === "silence") yield* TestClock.adjust("16 seconds");
+        else socket.close(1006);
+        const error = yield* Effect.flip(session.closed);
+        expect(error).toMatchObject({
+          reason: "transport",
+          detail:
+            end === "silence"
+              ? "Test environment stopped responding for 15s. It may be overloaded, asleep, or off the network."
+              : "Test environment disconnected.",
+        });
+        expect(socket.readyState).toBe(TestWebSocket.CLOSED);
+      }),
+  );
+
   it.effect("closes the websocket when the session scope is released", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
